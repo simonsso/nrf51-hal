@@ -4,6 +4,8 @@
 use gpio::gpio::PIN;
 use gpio::{Input, Floating,Output,PushPull};
 use nrf51::{SPI0,SPI1};
+use hal::spi::FullDuplex;
+use hal::blocking::spi::Transfer;
 // extern crate embedded_hal;
 // use hal::blocking::spi::Write;
 // use hal::spi::FullDuplex;
@@ -75,8 +77,27 @@ impl Spi<SPI0> {
         (self.spi, self.sckpin,self.mosipin,self.misopin)
     }
 }
+pub struct Spim<T>(T);
 
-impl hal::spi::FullDuplex<u8> for Spi<SPI0> {
+impl Transfer<u8> for Spi<SPI0>
+
+// impl<T> Transfer<u8> for S<T> where
+//      T: SpimExt,
+//      S: FullDuplex<u8>,
+{
+   type Error = Error;
+
+    fn transfer<'w>(&mut self, words: &'w mut [u8]) -> Result<&'w [u8], Error> {
+        for word in words.iter_mut() {
+            block!(self.send(word.clone()))?;
+            *word = block!(FullDuplex::read(self))?;
+        }
+
+        Ok(words)
+    }
+}
+
+impl FullDuplex<u8> for Spi<SPI0> {
     type Error = Error;
 
     fn read(&mut self) -> nb::Result<u8, Self::Error> {
@@ -97,19 +118,8 @@ impl hal::spi::FullDuplex<u8> for Spi<SPI0> {
 
     fn send(&mut self, byte: u8) -> nb::Result<(), Self::Error> {
         let spi = unsafe { &*SPI0::ptr() };
-        // Are we ready for sending out next byte?
-        if spi.events_ready.read().bits() == 1 {
-            // Send byte
-            spi.txd.write(|w| unsafe { w.bits(u32::from(byte)) });
-
-            // Reset ready for transmit event
-            spi.events_ready.reset();
-
-            Ok(())
-        } else {
-            // We're not ready, tell application to try again
-            Err(nb::Error::WouldBlock)
-        }
+        spi.txd.write(|w| unsafe { w.bits(u32::from(byte)) });
+        Ok(())
     }
 }
 
