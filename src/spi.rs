@@ -12,7 +12,7 @@ use hal::blocking::spi::Transfer;
 /// SPI abstraction
 pub struct Spi<SPI> {
     spi: SPI,
-    sckpin:  PIN<Input<Floating>>,
+    sckpin:  PIN<Output<PushPull>>,
     mosipin: PIN<Output<PushPull>>,
     misopin: PIN<Input<Floating>>,
 }
@@ -34,7 +34,7 @@ impl Spi<SPI0> {
         /// product specification for mo
         /// 
         /// 
-    pub fn spi0(spi: SPI0, sck: PIN<Input<Floating>>, mosi:PIN<Output<PushPull>>, miso: PIN<Input<Floating>>) -> Self {
+    pub fn spi0(spi: SPI0, sck: PIN<Output<PushPull>>, mosi:PIN<Output<PushPull>>, miso: PIN<Input<Floating>>) -> Self {
 
         // The SPI peripheral requires the pins to be in a mode that is not
         // exposed through the GPIO API, and might it might not make sense to
@@ -73,7 +73,7 @@ impl Spi<SPI0> {
     }
 
     /// Return the raw interface to the underlying SPI peripheral
-    pub fn release(self) -> (SPI0, PIN<Input<Floating>>,PIN<Output<PushPull>>,PIN<Input<Floating>> ) {
+    pub fn release(self) -> (SPI0, PIN<Output<PushPull>>,PIN<Output<PushPull>>,PIN<Input<Floating>> ) {
         (self.spi, self.sckpin,self.mosipin,self.misopin)
     }
 }
