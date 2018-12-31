@@ -3,18 +3,22 @@
 
 use gpio::gpio::PIN;
 use gpio::{Input, Floating,Output,PushPull};
-use nrf51::{SPI0,SPI1};
+use nrf51::{SPI0,SPI1,spi0};
 use hal::spi::FullDuplex;
 use hal::blocking::spi::Transfer;
-// extern crate embedded_hal;
-// use hal::blocking::spi::Write;
-// use hal::spi::FullDuplex;
+
+use core::ops::Deref;
+
 /// SPI abstraction
-pub struct Spi<SPI> {
-    spi: SPI,
-    sckpin:  PIN<Output<PushPull>>,
-    mosipin: PIN<Output<PushPull>>,
-    misopin: PIN<Input<Floating>>,
+pub struct Spi<SPI>{
+    spi:SPI,
+    pins:Pins,
+}
+
+pub struct Pins{
+    pub sck:    PIN<Output<PushPull>>,
+    pub mosi:   PIN<Output<PushPull>>,
+    pub miso:   PIN<Input<Floating>>
 }
 
 #[derive(Debug)]
@@ -23,7 +27,31 @@ pub enum Error {
     NACK,
 }
 
-impl Spi<SPI0> {
+pub trait SpiExt : Deref<Target=spi0::RegisterBlock> + Sized {
+    fn constrain(self, pins: Pins) -> Spi<Self>;
+}
+
+macro_rules! impl_spi_ext {
+    ($($spi:ty,)*) => {
+        $(
+            impl SpiExt for $spi {
+                fn constrain(self, pins: Pins) -> Spi<Self> {
+                    Spi::new(self, pins)
+                }
+            }
+        )*
+    }
+}
+
+impl_spi_ext!(
+    SPI0,
+    SPI1,
+);
+
+
+impl<SPI> Spi<SPI>
+where SPI:SpiExt
+{
         /// Interface to a SPI instance
         ///
         /// This is a very basic interface that comes with the following limitation:
@@ -32,9 +60,10 @@ impl Spi<SPI0> {
         /// etc.; SPI1 conflicts with SPIM1, SPIS1, etc. You need to make sure that
         /// conflicting instances are disabled before using `SPI`. Please refer to the
         /// product specification for mo
-        /// 
-        /// 
-    pub fn spi0(spi: SPI0, sck: PIN<Output<PushPull>>, mosi:PIN<Output<PushPull>>, miso: PIN<Input<Floating>>) -> Self {
+        ///
+        ///
+    pub fn new(spi: SPI, pins: Pins) -> Self
+        where SPI:SpiExt {
 
         // The SPI peripheral requires the pins to be in a mode that is not
         // exposed through the GPIO API, and might it might not make sense to
@@ -42,13 +71,13 @@ impl Spi<SPI0> {
         //
         // Select pins
         spi.pselsck.write(|w| {
-            unsafe { w.bits(sck.get_id().into()) }
+            unsafe { w.bits(pins.sck.get_id().into()) }
         });
         spi.pselmosi.write(|w| {
-            unsafe { w.bits(mosi.get_id().into()) }
+            unsafe { w.bits(pins.mosi.get_id().into()) }
         });
         spi.pselmiso.write(|w| {
-            unsafe { w.bits(miso.get_id().into()) }
+            unsafe { w.bits(pins.miso.get_id().into()) }
         });
 
         // Enable SPIM instance
@@ -69,21 +98,15 @@ impl Spi<SPI0> {
             w.frequency().m4() // 4MHz
         );
 
-        Spi{spi:spi,sckpin: sck, mosipin: mosi, misopin: miso}
+        Spi{spi:spi, pins:pins}
     }
-
-    /// Return the raw interface to the underlying SPI peripheral
-    pub fn release(self) -> (SPI0, PIN<Output<PushPull>>,PIN<Output<PushPull>>,PIN<Input<Floating>> ) {
-        (self.spi, self.sckpin,self.mosipin,self.misopin)
+    pub fn teardown(self) -> Pins {
+         self.pins
     }
 }
-pub struct Spim<T>(T);
 
-impl Transfer<u8> for Spi<SPI0>
-
-// impl<T> Transfer<u8> for S<T> where
-//      T: SpimExt,
-//      S: FullDuplex<u8>,
+impl<SPI> Transfer<u8> for Spi<SPI>
+where SPI:SpiExt
 {
    type Error = Error;
 
@@ -97,19 +120,20 @@ impl Transfer<u8> for Spi<SPI0>
     }
 }
 
-impl FullDuplex<u8> for Spi<SPI0> {
+impl<SPI> FullDuplex<u8> for Spi<SPI>
+where SPI:SpiExt {
     type Error = Error;
 
     fn read(&mut self) -> nb::Result<u8, Self::Error> {
-        let spi = unsafe { &*SPI0::ptr() };
-        match spi.events_ready.read().bits() {
+
+        match self.spi.events_ready.read().bits() {
             0 => Err(nb::Error::WouldBlock),
             _ => {
                 // Read one 8bit value
-                let byte = spi.rxd.read().bits() as u8;
+                let byte = self.spi.rxd.read().bits() as u8;
 
                 // Reset ready for receive event
-                spi.events_ready.reset();
+                self.spi.events_ready.reset();
 
                 Ok(byte)
             }
@@ -117,8 +141,7 @@ impl FullDuplex<u8> for Spi<SPI0> {
     }
 
     fn send(&mut self, byte: u8) -> nb::Result<(), Self::Error> {
-        let spi = unsafe { &*SPI0::ptr() };
-        spi.txd.write(|w| unsafe { w.bits(u32::from(byte)) });
+        self.spi.txd.write(|w| unsafe { w.bits(u32::from(byte)) });
         Ok(())
     }
 }
